@@ -25,6 +25,10 @@ export default function PoseAnalysisPage() {
     report,
     error,
     cameraActive,
+    videoDevices,
+    selectedDeviceId,
+    previewInfo,
+    setSelectedDeviceId,
     startCamera,
     stopCamera,
     startDetection,
@@ -68,6 +72,17 @@ export default function PoseAnalysisPage() {
   const handleStopCamera = () => {
     stopCamera()
     setPhase('idle')
+  }
+
+  const handleReconnectCamera = async () => {
+    stopCamera()
+    if (isDetecting) {
+      stopDetection()
+    }
+    setCountdown(0)
+    setElapsed(0)
+    await startCamera()
+    setPhase('camera')
   }
 
   const handleStartDetect = () => {
@@ -183,20 +198,21 @@ export default function PoseAnalysisPage() {
             <div className="relative bg-[#111] rounded-2xl overflow-hidden aspect-video">
               <video
                 ref={videoRef}
-                className="absolute inset-0 w-full h-full object-cover"
+                className="absolute inset-0 z-10 h-full w-full object-cover bg-transparent"
                 style={{ transform: 'scaleX(-1)' }}
+                autoPlay
                 playsInline
                 muted
               />
               <canvas
                 ref={canvasRef}
-                className="absolute inset-0 w-full h-full"
+                className="pointer-events-none absolute inset-0 z-20 h-full w-full"
                 style={{ transform: 'scaleX(-1)' }}
               />
 
               {/* Overlay States */}
               {phase === 'idle' && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#111]/80">
+                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#111]/80">
                   <Camera size={48} className="text-white/40 mb-4" />
                   <p className="text-white text-lg font-medium mb-2">姿态识别与分析</p>
                   <p className="text-white/50 text-sm mb-6 text-center max-w-md px-6">
@@ -215,7 +231,7 @@ export default function PoseAnalysisPage() {
 
               {/* Countdown */}
               {countdown > 0 && (
-                <div className="absolute inset-0 flex items-center justify-center bg-[#111]/60">
+                <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#111]/60">
                   <div className="text-center">
                     <div className="text-8xl font-mono-data text-white font-bold animate-pulse">
                       {countdown}
@@ -227,7 +243,7 @@ export default function PoseAnalysisPage() {
 
               {/* Detecting Overlay */}
               {isDetecting && (
-                <div className="absolute top-4 left-4 right-4 flex items-start justify-between">
+                <div className="absolute top-4 left-4 right-4 z-30 flex items-start justify-between">
                   <div className="bg-[#dc2f1b]/90 text-white text-xs font-mono-data px-3 py-1.5 rounded-full flex items-center gap-2">
                     <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
                     检测中 · {elapsed}s
@@ -237,7 +253,7 @@ export default function PoseAnalysisPage() {
 
               {/* Phase label - camera on but not detecting */}
               {phase === 'camera' && (
-                <div className="absolute top-4 left-4 bg-[#0a4fff]/80 text-white text-xs font-mono-data px-3 py-1.5 rounded-full flex items-center gap-2">
+                <div className="absolute top-4 left-4 z-30 bg-[#0a4fff]/80 text-white text-xs font-mono-data px-3 py-1.5 rounded-full flex items-center gap-2">
                   <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
                   摄像头预览中
                 </div>
@@ -294,6 +310,37 @@ export default function PoseAnalysisPage() {
                 </>
               )}
             </div>
+
+            {cameraActive && (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#555]">
+                <span className="font-medium text-[#111]">摄像头</span>
+                <select
+                  value={selectedDeviceId}
+                  onChange={(event) => setSelectedDeviceId(event.target.value)}
+                  className="min-w-48 rounded-md border border-[#d1d1cf] bg-white px-2 py-1 text-xs text-[#333]"
+                  aria-label="选择摄像头"
+                >
+                  <option value="">系统默认摄像头</option>
+                  {videoDevices.map((device, index) => (
+                    <option key={device.deviceId} value={device.deviceId}>
+                      {device.label || `摄像头 ${index + 1}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleReconnectCamera}
+                  className="rounded-md border border-[#d1d1cf] px-2 py-1 text-xs text-[#333] hover:border-[#999]"
+                >
+                  重新连接
+                </button>
+                {previewInfo && (
+                  <span className="text-[#777]">
+                    {previewInfo.deviceLabel} · {previewInfo.width}x{previewInfo.height}
+                    {previewInfo.paused ? ' · 已暂停' : ''}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Right: Real-time Data + Report */}

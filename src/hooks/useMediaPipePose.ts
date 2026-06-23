@@ -35,6 +35,14 @@ export interface PoseReport {
   endTime: number
 }
 
+export interface CameraPreviewInfo {
+  width: number
+  height: number
+  readyState: number
+  paused: boolean
+  deviceLabel: string
+}
+
 function calculateAngle(
   a: { x: number; y: number },
   b: { x: number; y: number },
@@ -258,6 +266,8 @@ export function useMediaPipePose() {
   const streamRef = useRef<MediaStream | null>(null)
   const frameRequestRef = useRef<number | null>(null)
   const processingFrameRef = useRef(false)
+  const lastPreviewUpdateRef = useRef(0)
+  const isDetectingRef = useRef(false)
   const metricsRef = useRef<PoseMetrics[]>([])
 
   const [isReady, setIsReady] = useState(false)
@@ -266,6 +276,20 @@ export function useMediaPipePose() {
   const [report, setReport] = useState<PoseReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [cameraActive, setCameraActive] = useState(false)
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
+  const [selectedDeviceId, setSelectedDeviceId] = useState('')
+  const [previewInfo, setPreviewInfo] = useState<CameraPreviewInfo | null>(null)
+
+  useEffect(() => {
+    isDetectingRef.current = isDetecting
+  }, [isDetecting])
+
+  const refreshVideoDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return
+
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    setVideoDevices(devices.filter((device) => device.kind === 'videoinput'))
+  }, [])
 
   const onResults = useCallback((results: Results) => {
     const canvas = canvasRef.current
@@ -275,12 +299,7 @@ export function useMediaPipePose() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Set canvas size to match video
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-
-    // Keep the canvas transparent so the native video preview stays visible.
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    if (canvas.width === 0 || canvas.height === 0 || video.videoWidth === 0 || video.videoHeight === 0) return
 
     if (results.poseLandmarks) {
       // Visibility guard helper
@@ -350,12 +369,12 @@ export function useMediaPipePose() {
       const metrics = extractMetrics(results)
       if (metrics) {
         setCurrentMetrics(metrics)
-        if (isDetecting) {
+        if (isDetectingRef.current) {
           metricsRef.current.push(metrics)
         }
 
         // Draw angles on canvas
-        if (isDetecting) {
+        if (isDetectingRef.current) {
           drawAngleLabel(25, metrics.kneeAngle.left, '膝')
           drawAngleLabel(26, metrics.kneeAngle.right, '膝')
           drawAngleLabel(13, metrics.elbowAngle.left, '肘')
@@ -363,7 +382,7 @@ export function useMediaPipePose() {
         }
       }
     }
-  }, [isDetecting])
+  }, [])
 
   const initPose = useCallback(async () => {
     try {
@@ -400,25 +419,37 @@ export function useMediaPipePose() {
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: 'user',
-        },
+        video: selectedDeviceId
+          ? { deviceId: { exact: selectedDeviceId } }
+          : true,
       })
 
       streamRef.current = stream
+      void refreshVideoDevices()
+
+      const waitForMetadata = new Promise<void>((resolve) => {
+        if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+          resolve()
+          return
+        }
+
+        video.addEventListener('loadedmetadata', () => resolve(), { once: true })
+      })
+
       video.srcObject = stream
       video.muted = true
       video.playsInline = true
 
-      if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
-        await new Promise<void>((resolve) => {
-          video.onloadedmetadata = () => resolve()
-        })
-      }
+      await Promise.race([
+        waitForMetadata,
+        new Promise<void>((resolve) => window.setTimeout(resolve, 1200)),
+      ])
 
-      await video.play()
+      await Promise.race([
+        video.play(),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 1200)),
+      ])
+
       setCameraActive(true)
 
       const processFrame = async () => {
@@ -426,6 +457,25 @@ export function useMediaPipePose() {
         const pose = poseRef.current
 
         if (!activeVideo || !pose || !streamRef.current) return
+
+        if (
+          activeVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+          activeVideo.videoWidth > 0 &&
+          activeVideo.videoHeight > 0
+        ) {
+          const canvas = canvasRef.current
+          const ctx = canvas?.getContext('2d')
+          if (canvas && ctx) {
+            if (canvas.width !== activeVideo.videoWidth) {
+              canvas.width = activeVideo.videoWidth
+            }
+            if (canvas.height !== activeVideo.videoHeight) {
+              canvas.height = activeVideo.videoHeight
+            }
+            ctx.clearRect(0, 0, canvas.width, canvas.height)
+            ctx.drawImage(activeVideo, 0, 0, canvas.width, canvas.height)
+          }
+        }
 
         if (
           activeVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
@@ -441,6 +491,20 @@ export function useMediaPipePose() {
           }
         }
 
+        const now = Date.now()
+        if (now - lastPreviewUpdateRef.current > 1000) {
+          lastPreviewUpdateRef.current = now
+          const track = streamRef.current.getVideoTracks()[0]
+          const settings = track?.getSettings()
+          setPreviewInfo({
+            width: activeVideo.videoWidth,
+            height: activeVideo.videoHeight,
+            readyState: activeVideo.readyState,
+            paused: activeVideo.paused,
+            deviceLabel: track?.label || settings?.deviceId || '默认摄像头',
+          })
+        }
+
         frameRequestRef.current = requestAnimationFrame(processFrame)
       }
 
@@ -449,7 +513,7 @@ export function useMediaPipePose() {
       setError('无法访问摄像头，请检查浏览器权限，或确认没有其他应用正在占用摄像头')
       console.error(err)
     }
-  }, [])
+  }, [refreshVideoDevices, selectedDeviceId])
 
   const stopCamera = useCallback(() => {
     if (frameRequestRef.current !== null) {
@@ -476,6 +540,7 @@ export function useMediaPipePose() {
     }
 
     setCameraActive(false)
+    setPreviewInfo(null)
   }, [])
 
   const startDetection = useCallback(() => {
@@ -493,13 +558,14 @@ export function useMediaPipePose() {
   useEffect(() => {
     const timer = setTimeout(() => {
       void initPose()
+      void refreshVideoDevices()
     }, 0)
 
     return () => {
       clearTimeout(timer)
       stopCamera()
     }
-  }, [initPose, stopCamera])
+  }, [initPose, refreshVideoDevices, stopCamera])
 
   return {
     videoRef,
@@ -510,6 +576,11 @@ export function useMediaPipePose() {
     report,
     error,
     cameraActive,
+    videoDevices,
+    selectedDeviceId,
+    previewInfo,
+    setSelectedDeviceId,
+    refreshVideoDevices,
     startCamera,
     stopCamera,
     startDetection,
