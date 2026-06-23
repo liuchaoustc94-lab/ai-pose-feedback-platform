@@ -279,14 +279,8 @@ export function useMediaPipePose() {
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
 
-    // Clear canvas
+    // Keep the canvas transparent so the native video preview stays visible.
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-    // Draw video frame (mirrored)
-    ctx.save()
-    ctx.scale(-1, 1)
-    ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height)
-    ctx.restore()
 
     if (results.poseLandmarks) {
       // Visibility guard helper
