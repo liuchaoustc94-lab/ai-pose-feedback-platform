@@ -1,4 +1,4 @@
-import type { PoseReport } from '../hooks/useMediaPipePose'
+import type { PoseReport } from './poseMetrics'
 
 export interface ArchiveIdentity {
   className: string
@@ -83,6 +83,8 @@ export function savePoseReportToArchive(
   moduleTitle: string,
   identity = readArchiveIdentity()
 ) {
+  if (report.metrics.length === 0) return null
+
   const activeIdentity =
     identity ?? saveArchiveIdentity('体教2401', '01')
   const record: TrainingArchiveRecord = {
